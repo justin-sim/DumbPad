@@ -65,7 +65,7 @@ jobs:
           docker run -d \
             --name dumbpad \
             --platform linux/amd64 \
-            -p 3000:3000 \
+            -p 3001:3000 \
             -v /app/data:/app/data \
             --restart unless-stopped \
             harbor.local.jushack.tech/docker/dumbpad:latest
