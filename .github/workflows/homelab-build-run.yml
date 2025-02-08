@@ -87,8 +87,3 @@ jobs:
           sshpass -e ssh -o StrictHostKeyChecking=no ${SSH_USER}@192.168.248.79 "${DEPLOY_SCRIPT}"
         shell: bash
         continue-on-error: true  # Optional: if you want the workflow to succeed even with non-zero exit
-
-      # Step 4: Push the Docker image to Docker Hub
-      - name: Push Docker Image
-        run: |
-          docker push dumbwareio/dumbpad:latest 
