@@ -1,31 +1,92 @@
-name: Build and Push Docker Image
-
+name: Homelab Build and Run
 on:
-  push:
-    branches:
-      - main
-      - dev # Trigger the workflow on pushes to the main branch
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - main
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-
+  build-and-deploy:
+    runs-on: self-hosted
+#    environment: docker_CT
     steps:
-      # Step 1: Check out the repository
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # Step 2: Log in to Docker Hub
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Step 3: Build the Docker image
-      - name: Build Docker Image
+      - name: Set up Docker Buildx
         run: |
-          docker build -t dumbwareio/dumbpad:latest .
+          docker buildx create --use
+          docker buildx inspect --bootstrap
+        shell: bash
+
+      - name: Log in to Local Registry
+        run: |
+          docker login harbor.local.jushack.tech -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }}
+        shell: bash
+
+      - name: Build and Push Multi-arch Docker Image
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag harbor.local.jushack.tech/docker/dumbpad:latest \
+            --push \
+            .
+        shell: bash
+
+      - name: Deploy to server using SSH
+        env:
+          SSH_USER: ${{ secrets.SSH_USERNAME }}
+          SSH_PASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          # Create deployment script with error handling
+          DEPLOY_SCRIPT="""
+          set -e  # Exit on error
+          
+          echo 'Creating data directory...'
+          mkdir -p /app/data
+          
+          echo 'Logging into registry...'
+          docker login harbor.local.jushack.tech -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }}
+          
+          echo 'Pulling latest image...'
+          docker pull harbor.local.jushack.tech/docker/dumbpad:latest
+          
+          echo 'Stopping old container...'
+          docker stop dumbpad || true
+          docker rm dumbpad || true
+          
+          echo 'Starting new container...'
+          docker run -d \
+            --name dumbpad \
+            --platform linux/amd64 \
+            -p 3000:3000 \
+            -v /app/data:/app/data \
+            --restart unless-stopped \
+            harbor.local.jushack.tech/docker/dumbpad:latest
+          
+          echo 'Verifying container status...'
+          docker ps | grep dumbpad || echo 'Container status check failed, but container might still be running'
+          
+          # Check if container is actually running regardless of grep
+          if docker ps --format '{{.Names}}' | grep -q '^dumbpad$'; then
+            echo 'Container is running successfully'
+            exit 0
+          else
+            echo 'Container failed to start'
+            exit 1
+          fi
+          """
+          
+          export SSHPASS="${SSH_PASS}"
+          sshpass -e ssh -o StrictHostKeyChecking=no ${SSH_USER}@192.168.248.79 "${DEPLOY_SCRIPT}"
+        shell: bash
+        continue-on-error: true  # Optional: if you want the workflow to succeed even with non-zero exit
 
       # Step 4: Push the Docker image to Docker Hub
       - name: Push Docker Image
